@@ -7,8 +7,13 @@ sys.path.append("../tools/")
 from feature_format import featureFormat, targetFeatureSplit
 from tester import test_classifier, dump_classifier_and_data
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.pipeline import Pipeline
+#from sklearn.pipeline import Pipeline
 from sklearn.decomposition import RandomizedPCA
+
+from sklearn.grid_search import GridSearchCV
+from sklearn.cross_validation import train_test_split
+#from sklearn.cross_validation import StratifiedShuffleSplit
+#from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 
 ### Task 1: Select what features you'll use.
@@ -27,7 +32,8 @@ features_list = ['poi',
                  'restricted_stock_deferred',
                  'salary',
                  'total_payments',
-                 'total_stock_value']
+                 'total_stock_value',
+                 'other']
 
 ### Load the dictionary containing the dataset
 data_dict = pickle.load(open("final_project_dataset.pkl", "r") )
@@ -76,81 +82,20 @@ for person in my_dataset:
 
 avg_to_poi_ratio = total_to_poi_ratios / float(num_to_poi_ratios)
 
-for person in my_dataset:
-    my_dataset[person]['to_poi_ratio_normalized'] = 'NaN'
-    my_dataset[person]['from_poi_ratio_normalized'] = 'NaN'
-    if my_dataset[person]['to_poi_ratio'] != "NaN":
-        my_dataset[person]['to_poi_ratio_normalized'] =  (my_dataset[person]['to_poi_ratio'] - avg_to_poi_ratio)
-    if my_dataset[person]['from_poi_ratio'] != "NaN":
-        my_dataset[person]['from_poi_ratio_normalized'] =  (my_dataset[person]['from_poi_ratio'] - avg_to_poi_ratio)
-
-features_list.append('to_poi_ratio_normalized')
-features_list.append('from_poi_ratio_normalized')
-
-# Remove less important features
-sparse_data = {}
-remove_dict = {}
-for name in data_dict:
-    for feat in data_dict[name]:
-        if data_dict[name][feat] == "NaN":
-            if feat in sparse_data:
-                sparse_data[feat] += 1
-                # If more than 108 are NaN, I want to remove these features
-                if sparse_data[feat] > (144*.7):
-                    remove_dict[feat] = sparse_data[feat]
-            else:
-                sparse_data[feat] = 1
-
-print "Features with 70% 'NaN' values : "
-print remove_dict
-print "\n"
-
-# for key, value in data_dict.iteritems():
-#   if data_dict[key]['loan_advances'] != "NaN":
-#        print key, data_dict[key]['loan_advances']
-
-count = 0
-for key, value in data_dict.iteritems():
-    if data_dict[key]['poi'] == True and data_dict[key]['director_fees'] != "NaN":
-        print key, data_dict[key]['director_fees']
-    else:
-        count += 1
-
-if count == 145:
-    print "No POIs have Director's Fees"
-
-count = 0
-for key, value in data_dict.iteritems():
-    if data_dict[key]['poi'] == True and data_dict[key]['restricted_stock_deferred'] != "NaN":
-        print key, data_dict[key]['restricted_stock_deferred']
-    else:
-        count += 1
-
-if count == 145:
-    print "No POIs have Restricted Stock Deferred"
-
-features_list.remove('director_fees')
-print "Director Fees removed from features_list.", "\n"
-features_list.remove('restricted_stock_deferred')
-print "Restricted Stock Deferred removed from features_list.", "\n"
-features_list.remove('loan_advances')
-print "Loan Advances removed from features_list.", "\n"
-features_list.remove('deferral_payments')
-print "Deferral Payments removed from features_list.", "\n"
-
 ### Extract features and labels from dataset for local testing
 
 data = featureFormat(my_dataset, features_list, sort_keys = True)
 labels, features = targetFeatureSplit(data)
 
-from sklearn.cross_validation import train_test_split
-
-features_train, features_test, labels_train, labels_test = train_test_split(features, labels, test_size=0.3, random_state=42)
+# Scaler, if needed.
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler()
+features = scaler.fit_transform(features)
 
 # Select the 11 best features with SelectKBest
 from sklearn.feature_selection import SelectKBest
 print "SelectKBest Feature Ranking"
-k_best = SelectKBest(k=10)
+k_best = SelectKBest(k=11)
 k_best.fit(features, labels)
 
 results_list = zip(k_best.get_support(), features_list[1:], k_best.scores_)
@@ -163,13 +108,34 @@ for i in results_list:
         refined_features.append(i[1])
         count += 1
 
-# Scaler, if needed.
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-scaler = MinMaxScaler()
-# scaler = StandardScaler()
+# Ranked 11 best features as determined by SelectKFeatures
+features_list = ['poi',
+                 'exercised_stock_options',
+                 'total_stock_value',
+                 'bonus',
+                 'salary',
+                 'deferred_income', #5
+                 'long_term_incentive', # 6
+                 'restricted_stock',# 7
+                 'total_payments', # 8
+                 'loan_advances',  # 9
+                 'expenses',       # 10
+                 'from_poi_ratio'  # 11
+                 ]
 
-features = scaler.fit_transform(features)
+########## FINAL FEATURES LIST #########
+features_list = ['poi',
+                 'exercised_stock_options',
+                 'total_stock_value',
+                 'bonus']
 
+data = featureFormat(my_dataset, features_list, sort_keys = True)
+labels, features = targetFeatureSplit(data)
+
+# Scaler, for K Nearest Neighbors.
+# from sklearn.preprocessing import MinMaxScaler
+# scaler = MinMaxScaler()
+# features = scaler.fit_transform(features)
 
 ### Task 4: Try a variety of classifiers
 ### Please name your classifier clf for easy export below.
@@ -177,47 +143,73 @@ features = scaler.fit_transform(features)
 ### you'll need to use Pipelines. For more info:
 ### http://scikit-learn.org/stable/modules/pipeline.html
 
-from sklearn.feature_selection import SelectKBest
+## For local testing
+def print_results(i):
+    features_train, features_test, labels_train, labels_test = train_test_split(features, labels, random_state=42)
+    clf.fit(features_train, labels_train)
+    print 'Best score: %0.3f' % clf.best_score_
+    print 'Best parameters set:'
+    best_parameters = clf.best_estimator_.get_params()
+    new_params = {}
+    for param_name in sorted(parameters.keys()):
+        print '\t%s: %r' % (param_name, best_parameters[param_name])
+        new_params[param_name] = best_parameters[param_name]
+    predictions = clf.predict(features_test)
+    # print 'Accuracy: ', accuracy_score(labels_test, predictions)
+    # print 'Precision: ', precision_score(labels_test, predictions)
+    # print 'Recall: ', recall_score(labels_test, predictions)
+    print "----------------------------------------------------------------------"
 
-########## Number 1 ##########
-from sklearn.neighbors import KNeighborsClassifier
-#Accuracy: 0.87060 Precision: 0.52502  Recall: 0.30950 F1: 0.38943 F2: 0.33718
-estimators = [('k-best', SelectKBest(k=9)),
-              ('k-neighbors', KNeighborsClassifier(n_neighbors = 3,
-                                                   algorithm = 'ball_tree',
-                                                   weights ='distance',
-                                                   p = 5))]
+clf_list = ["tree", "bayes", "adaboost", "kNeighbors"]
 
-########## Number 2 ##########
+for i in clf_list:
+    print "---------------------------"+ i.upper() +"----------------------------"
+    if i == "tree":
+        from sklearn.tree import DecisionTreeClassifier
+        tree = DecisionTreeClassifier()
+        parameters = {'criterion': ["gini", "entropy"],
+              'splitter': ['best', 'random'],
+              'min_samples_split': [2,3,4,5]
+             }
+        clf = GridSearchCV(tree, parameters, verbose=1, cv=10)
+        print_results(i)
+    if i == "bayes":
+        from sklearn.naive_bayes import GaussianNB
+        bayes =  GaussianNB()
+        parameters = {}
+        clf = GridSearchCV(bayes, parameters, verbose=1, cv=10)
+        print_results(i)
+    if i == "adaboost":
+        from sklearn.ensemble import AdaBoostClassifier
+        adaboost = AdaBoostClassifier(DecisionTreeClassifier(criterion='entropy', min_samples_split=3, splitter='best'))
+        parameters = {'n_estimators': [10, 20, 30, 40, 50, 60, 70],
+              'algorithm': ['SAMME', 'SAMME.R'],
+              'learning_rate': [.5,.8, 1, 1.2, 1.5]}
+        clf = GridSearchCV(adaboost, parameters, verbose=1, cv=10)
+        print_results(i)
+    if i == "kNeighbors":
+        from sklearn.neighbors import KNeighborsClassifier
+        kNeighbors = KNeighborsClassifier()
+        parameters = {'n_neighbors': [2,3,4,5,6,7],
+                      'algorithm': ['ball_tree', 'kd_tree', 'brute', 'auto'],
+                      'weights': ['uniform', 'distance'],
+                      'p': [3,4,5,6,7,8]
+                     }
+        clf = GridSearchCV(kNeighbors, parameters, verbose=1, cv=10)
+        print_results(i)
+
+
+
+########### BACKUP CLASSIFIERS ###########
+#from sklearn.tree import DecisionTreeClassifier
+#clf = DecisionTreeClassifier(criterion='entropy', min_samples_split=2, splitter='best')
+
 #from sklearn.naive_bayes import GaussianNB
-#Accuracy: 0.85013  Precision: 0.42584  Recall: 0.35600 F1: 0.38780F2: 0.36807
-#estimators = [('k-best', SelectKBest(k = 5)), ('naive_bayes', GaussianNB())]
+#clf =  GaussianNB()
 
-########## Number 3 ##########
-# Accuracy: 0.81800 Precision: 0.31823  Recall: 0.31950 F1: 0.31886F2: 0.31924
-#clf = DecisionTreeClassifier(criterion = 'entropy', splitter = 'random')
+#from sklearn.neighbors import KNeighborsClassifier
+#clf = KNeighborsClassifier(algorithm='ball_tree', n_neighbors=2, p=6, weights='uniform')
 
-###### Insufficient Classifiers #####
-# from sklearn.grid_search import GridSearchCV
-# parameters = {'n_neighbors': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-#               'weights': ('uniform', 'distance'),
-#               'algorithm': ('auto', 'ball_tree', 'kd_tree', 'brute'),
-#               'p':[1,2] }
-# knc = KNeighborsClassifier()
-# clf = GridSearchCV(knc, parameters)
-
-#from sklearn.ensemble import AdaBoostClassifier
-#clf = AdaBoostClassifier(DecisionTreeClassifier(max_depth=1, min_samples_leaf=2), n_estimators=30, learning_rate = .8)
-
-#clf = AdaBoostClassifier(DecisionTreeClassifier(criterion='entropy', splitter='random'), learning_rate = .8)
-
-# from sklearn.linear_model import LogisticRegression
-# estimators = [('k-best', SelectKBest(k=5)), ('log', LogisticRegression())]
-
-# Accuracy: 0.86380 Precision: 0.48065  Recall: 0.26700 F1: 0.34330 F2: 0.29305
-#clf = KNeighborsClassifier(n_neighbors = 3, algorithm = 'ball_tree', weights='distance', p=5)
-
-clf = Pipeline(estimators)
 ###########################
 
 ### Task 5: Tune your classifier to achieve better than .3 precision and recall
@@ -225,6 +217,12 @@ clf = Pipeline(estimators)
 ### Because of the small size of the dataset, the script uses stratified
 ### shuffle split cross validation. For more info:
 ### http://scikit-learn.org/stable/modules/generated/sklearn.cross_validation.StratifiedShuffleSplit.html
+
+
+########### FINAL CLASSIFIER ##############
+from sklearn.ensemble import AdaBoostClassifier
+clf = AdaBoostClassifier(DecisionTreeClassifier(criterion='entropy', min_samples_split=3, splitter='best'),
+    algorithm='SAMME', learning_rate=1.5, n_estimators=40)
 
 test_classifier(clf, my_dataset, features_list)
 
